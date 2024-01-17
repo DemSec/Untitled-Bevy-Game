@@ -1,90 +1,182 @@
-//! Demonstrates how to work with Cubic curves.
+// This lint usually gives bad advice in the context of Bevy -- hiding complex queries behind
+// type aliases tends to obfuscate code while offering no improvement in code cleanliness.
+#![allow(clippy::type_complexity)]
 
 use bevy::{
-   math::{cubic_splines::CubicCurve, vec3},
-   prelude::*,
+    input::touch::TouchPhase,
+    prelude::*,
+    window::{ApplicationLifetime, WindowMode},
 };
 
-#[derive(Component)]
-pub struct Curve(CubicCurve<Vec3>);
-
-
+// the `bevy_main` proc_macro generates the required boilerplate for iOS and Android
+#[bevy_main]
 fn main() {
-   App::new()
-       .add_plugins(DefaultPlugins)
-       .add_systems(Startup, setup)
-       .add_systems(Update, animate_cube)
-       .run();
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(Window {
+            resizable: false,
+            mode: WindowMode::BorderlessFullscreen,
+            ..default()
+        }),
+        ..default()
+    }))
+    .add_systems(Startup, (setup_scene, setup_music))
+    .add_systems(Update, (touch_camera, button_handler, handle_lifetime));
+
+    // MSAA makes some Android devices panic, this is under investigation
+    // https://github.com/bevyengine/bevy/issues/8229
+    #[cfg(target_os = "android")]
+    app.insert_resource(Msaa::Off);
+
+    app.run();
 }
 
-fn setup(
-   mut commands: Commands,
-   mut meshes: ResMut<Assets<Mesh>>,
-   mut materials: ResMut<Assets<StandardMaterial>>,
+fn touch_camera(
+    windows: Query<&Window>,
+    mut touches: EventReader<TouchInput>,
+    mut camera: Query<&mut Transform, With<Camera3d>>,
+    mut last_position: Local<Option<Vec2>>,
 ) {
-   // Define your control points
-   // These points will define the curve
-   // You can learn more about bezier curves here
-   // https://en.wikipedia.org/wiki/B%C3%A9zier_curve
-   let points = [[
-       vec3(-6., 2., 0.),
-       vec3(12., 8., 0.),
-       vec3(-12., 8., 0.),
-       vec3(6., 2., 0.),
-   ]];
+    let window = windows.single();
 
-   // Make a CubicCurve
-   let bezier = CubicBezier::new(points).to_curve();
-
-   // Spawning a cube to experiment on
-   commands.spawn((
-       PbrBundle {
-           mesh: meshes.add(shape::Cube::default().into()),
-           material: materials.add(Color::ORANGE.into()),
-           transform: Transform::from_translation(points[0][0]),
-           ..default()
-       },
-       Curve(bezier),
-   ));
-
-   // Some light to see something
-   commands.spawn(PointLightBundle {
-       point_light: PointLight {
-           intensity: 9000.,
-           range: 100.,
-           shadows_enabled: true,
-           ..default()
-       },
-       transform: Transform::from_xyz(8., 16., 8.),
-       ..default()
-   });
-
-   // ground plane
-   commands.spawn(PbrBundle {
-       mesh: meshes.add(shape::Plane::from_size(50.).into()),
-       material: materials.add(Color::SILVER.into()),
-       ..default()
-   });
-
-   // The camera
-   commands.spawn(Camera3dBundle {
-       transform: Transform::from_xyz(0., 6., 12.).looking_at(Vec3::new(0., 3., 0.), Vec3::Y),
-       ..default()
-   });
+    for touch in touches.read() {
+        if touch.phase == TouchPhase::Started {
+            *last_position = None;
+        }
+        if let Some(last_position) = *last_position {
+            let mut transform = camera.single_mut();
+            *transform = Transform::from_xyz(
+                transform.translation.x
+                    + (touch.position.x - last_position.x) / window.width() * 5.0,
+                transform.translation.y,
+                transform.translation.z
+                    + (touch.position.y - last_position.y) / window.height() * 5.0,
+            )
+            .looking_at(Vec3::ZERO, Vec3::Y);
+        }
+        *last_position = Some(touch.position);
+    }
 }
 
-pub fn animate_cube(
-   time: Res<Time>,
-   mut query: Query<(&mut Transform, &Curve)>,
-   mut gizmos: Gizmos,
+/// set up a simple 3D scene
+fn setup_scene(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-   let t = (time.elapsed_seconds().sin() + 1.) / 2.;
+    // plane
+    commands.spawn(PbrBundle {
+        mesh: meshes.add(shape::Plane::from_size(5.0).into()),
+        material: materials.add(Color::rgb(0.1, 0.2, 0.1).into()),
+        ..default()
+    });
+    // cube
+    commands.spawn(PbrBundle {
+        mesh: meshes.add(Mesh::from(shape::Cube { size: 1.0 })),
+        material: materials.add(Color::rgb(0.5, 0.4, 0.3).into()),
+        transform: Transform::from_xyz(0.0, 0.5, 0.0),
+        ..default()
+    });
+    // sphere
+    commands.spawn(PbrBundle {
+        mesh: meshes.add(
+            Mesh::try_from(shape::Icosphere {
+                subdivisions: 4,
+                radius: 0.5,
+            })
+            .unwrap(),
+        ),
+        material: materials.add(Color::rgb(0.1, 0.4, 0.8).into()),
+        transform: Transform::from_xyz(1.5, 1.5, 1.5),
+        ..default()
+    });
+    // light
+    commands.spawn(PointLightBundle {
+        transform: Transform::from_xyz(4.0, 8.0, 4.0),
+        point_light: PointLight {
+            intensity: 5000.0,
+            // Shadows makes some Android devices segfault, this is under investigation
+            // https://github.com/bevyengine/bevy/issues/8214
+            #[cfg(not(target_os = "android"))]
+            shadows_enabled: true,
+            ..default()
+        },
+        ..default()
+    });
+    // camera
+    commands.spawn(Camera3dBundle {
+        transform: Transform::from_xyz(-2.0, 2.5, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
+        ..default()
+    });
 
-   for (mut transform, cubic_curve) in &mut query {
-       // Draw the curve
-       gizmos.linestrip(cubic_curve.0.iter_positions(50), Color::WHITE);
-       // position takes a point from the curve where 0 is the initial point
-       // and 1 is the last point
-       transform.translation = cubic_curve.0.position(t);
-   }
+    // Test ui
+    commands
+        .spawn(ButtonBundle {
+            style: Style {
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                position_type: PositionType::Absolute,
+                left: Val::Px(50.0),
+                right: Val::Px(50.0),
+                bottom: Val::Px(50.0),
+                ..default()
+            },
+            ..default()
+        })
+        .with_children(|b| {
+            b.spawn(
+                TextBundle::from_section(
+                    "Test Button",
+                    TextStyle {
+                        font_size: 30.0,
+                        color: Color::BLACK,
+                        ..default()
+                    },
+                )
+                .with_text_alignment(TextAlignment::Center),
+            );
+        });
+}
+
+fn button_handler(
+    mut interaction_query: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<Button>),
+    >,
+) {
+    for (interaction, mut color) in &mut interaction_query {
+        match *interaction {
+            Interaction::Pressed => {
+                *color = Color::BLUE.into();
+            }
+            Interaction::Hovered => {
+                *color = Color::GRAY.into();
+            }
+            Interaction::None => {
+                *color = Color::WHITE.into();
+            }
+        }
+    }
+}
+
+fn setup_music(asset_server: Res<AssetServer>, mut commands: Commands) {
+    commands.spawn(AudioBundle {
+        source: asset_server.load("sounds/Windless Slopes.ogg"),
+        settings: PlaybackSettings::LOOP,
+    });
+}
+
+// Pause audio when app goes into background and resume when it returns.
+// This is handled by the OS on iOS, but not on Android.
+fn handle_lifetime(
+    mut lifetime_events: EventReader<ApplicationLifetime>,
+    music_controller: Query<&AudioSink>,
+) {
+    for event in lifetime_events.read() {
+        match event {
+            ApplicationLifetime::Suspended => music_controller.single().pause(),
+            ApplicationLifetime::Resumed => music_controller.single().play(),
+            ApplicationLifetime::Started => (),
+        }
+    }
 }

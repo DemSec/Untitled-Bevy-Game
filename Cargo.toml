@@ -3,20 +3,47 @@ name = "my_bevy_game"
 version = "0.1.0"
 edition = "2021" # Cargo edition
 
+[main]
+name = "my_bevy_game"
+crate-type = ["staticlib", "cdylib"]
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bevy = { version = "0.12.1"}
+bevy = { version = "0.12.1" }
 # Cannot use dynamic linking library with webgl2
+# Don't use dynamic linking for release builds
 # bevy = { version = "0.12.1", features = ["dynamic_linking"] }
 
-[workspace]
-resolver = "2" # Important! wgpu/Bevy needs this if using Cargo Workspaces
+[package.metadata.android]
+# package = "org.bevyengine.example"
+# apk_name = "mybevygame"
+# assets = "../../assets"
+# resources = "../../assets/android-res"
+# This strips debug symbols from the shared libraries, drastically reducing APK size.
+strip = "strip"
+build_targets = ["aarch64-linux-android", "armv7-linux-androideabi"]
+
+# [package.metadata.android.application]
+# icon = "@mipmap/ic_launcher"
+# label = "Bevy Example"
+
+[package.metadata.android.sdk]
+target_sdk_version = 31
+
+# [workspace]
+# resolver = "2" # Important! wgpu/Bevy needs this if using Cargo Workspaces
 
 # Enable a small amount of optimization in debug mode
+# Use opt-level 0 for debugging
 [profile.dev]
 opt-level = 1
 
 # Enable high optimizations for dependencies (incl. Bevy), but not for our code:
 [profile.dev.package."*"]
 opt-level = 3
+
+# LTO (Link-Time-Optimization)
+# To squeeze out even more performance at the cost of very slow compile times:
+[profile.release]
+lto = "thin"
